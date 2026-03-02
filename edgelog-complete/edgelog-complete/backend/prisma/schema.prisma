@@ -1,0 +1,196 @@
+// ─────────────────────────────────────────────────────────────────
+// EDGELOG — Prisma Schema
+// Base : PostgreSQL
+// Déploiement : Railway / Render / Supabase
+// ─────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── ENUM ──────────────────────────────────────────────────────────
+
+enum Plan {
+  basic
+  premium
+  pro
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+}
+
+enum TradeDirection {
+  LONG
+  SHORT
+}
+
+enum AccountType {
+  Reel
+  Demo
+  PropFirm
+}
+
+enum MentorAccess {
+  lecture
+  complet
+}
+
+// ── USER ──────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String?   // null si OAuth Google
+  provider      String?   // "google" | null
+  providerId    String?   // Google sub
+  avatar        String?
+
+  plan          Plan      @default(basic)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Stripe
+  stripeCustomerId      String?   @unique
+  stripeSubscriptionId  String?   @unique
+  stripePriceId         String?
+  stripeStatus          String?   // active | trialing | canceled | past_due
+  trialEndsAt           DateTime?
+  currentPeriodEnd      DateTime?
+
+  // Relations
+  accounts      Account[]
+  trades        Trade[]
+  mentorOf      MentorRelation[]  @relation("MentorUser")
+  studentOf     MentorRelation[]  @relation("StudentUser")
+  feedbacks     Feedback[]
+  refreshTokens RefreshToken[]
+
+  @@index([email])
+  @@index([stripeCustomerId])
+}
+
+// ── ACCOUNT (compte de trading) ───────────────────────────────────
+
+model Account {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  type        AccountType @default(Reel)
+  balance     Float       @default(10000)
+  currency    String      @default("$")
+  broker      String?
+  isActive    Boolean     @default(true)
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  trades      Trade[]
+
+  @@index([userId])
+}
+
+// ── TRADE ─────────────────────────────────────────────────────────
+
+model Trade {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String
+  account       Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // Core
+  asset         String
+  direction     TradeDirection
+  status        TradeStatus     @default(OPEN)
+  date          String          // YYYY-MM-DD
+  time          String?         // HH:MM
+  entry         Float?
+  exit          Float?
+  size          Float?
+  pnl           Float?
+  rMultiple     Float?
+
+  // Risk
+  stopLoss      Float?
+  takeProfit    Float?
+  mfe           Float?
+  mae           Float?
+
+  // Meta
+  setup         String?
+  emotion_before String?
+  emotion_after  String?
+  notes         String?
+  tags          String[]        // PostgreSQL array
+  checklistDone Boolean[]
+
+  // Intraday timeline (JSON array)
+  intraday      Json?
+
+  // Import
+  importSource  String?         // broker slug
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  feedbacks     Feedback[]
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([date])
+  @@index([status])
+}
+
+// ── MENTOR / COACH ────────────────────────────────────────────────
+
+model MentorRelation {
+  id          String        @id @default(cuid())
+  mentorId    String
+  mentor      User          @relation("MentorUser", fields: [mentorId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     User          @relation("StudentUser", fields: [studentId], references: [id], onDelete: Cascade)
+
+  access      MentorAccess  @default(lecture)
+  createdAt   DateTime      @default(now())
+
+  @@unique([mentorId, studentId])
+  @@index([studentId])
+}
+
+model Feedback {
+  id          String    @id @default(cuid())
+  tradeId     String
+  trade       Trade     @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  content     String
+  createdAt   DateTime  @default(now())
+
+  @@index([tradeId])
+}
+
+// ── REFRESH TOKENS ────────────────────────────────────────────────
+
+model RefreshToken {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token       String    @unique
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
